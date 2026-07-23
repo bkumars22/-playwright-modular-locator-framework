@@ -3,5 +3,7 @@ __pycache__/
 .pytest_cache/
 *.pyc
 report.html
+report.json
+dashboard.html
 assets/
 _site/

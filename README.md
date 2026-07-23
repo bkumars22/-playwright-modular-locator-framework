@@ -145,11 +145,18 @@ new strategy classes — `ModularLocatorEngine` itself never changes.
 
 1. Sets up Python, installs dependencies from `requirements.txt`
 2. Installs the Chromium browser binary
-3. Runs the full test suite, generating `report.html`
-4. Publishes that report to **GitHub Pages** as `index.html` — regardless
-   of whether tests passed or failed, so the dashboard always reflects the
-   latest run
-5. The workflow itself still reports red/green correctly in the Actions
+3. Runs the full test suite, producing both a machine-readable
+   `report.json` (via `pytest-json-report`) and a detailed
+   `report.html` (via `pytest-html`)
+4. `scripts/generate_dashboard.py` turns `report.json` into a styled,
+   self-contained `dashboard.html` — a hero pass-rate figure, a
+   pass/fail/skip meter, stat tiles, and a per-test results table,
+   with light/dark mode
+5. Publishes `dashboard.html` to **GitHub Pages** as `index.html` (with
+   the full `report.html` alongside it, linked from the dashboard's
+   footer as "Detailed report") — regardless of whether tests passed or
+   failed, so the dashboard always reflects the latest run
+6. The workflow itself still reports red/green correctly in the Actions
    tab (a failing test fails the workflow run, even though the dashboard
    still gets published)
 
@@ -159,7 +166,15 @@ Repo → **Settings → Pages → Build and deployment → Source** → select
 dashboard at the live URL linked at the top of this README.
 
 You can also trigger a run manually from the **Actions** tab via
-"Run workflow" (the `workflow_dispatch` trigger).
+"Run workflow" (the `workflow_dispatch` trigger), or regenerate the
+dashboard locally:
+
+```bash
+pytest --json-report --json-report-file=report.json
+python scripts/generate_dashboard.py report.json dashboard.html
+```
+
+Then open `dashboard.html` directly in a browser.
 
 ---
 

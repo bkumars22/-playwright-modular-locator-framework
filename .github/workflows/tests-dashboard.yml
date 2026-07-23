@@ -34,14 +34,22 @@ jobs:
 
       - name: Run tests
         id: run_tests
-        run: pytest --html=report.html --self-contained-html
+        run: pytest --html=report.html --self-contained-html --json-report --json-report-file=report.json
         continue-on-error: true
+
+      - name: Generate dashboard
+        if: always()
+        run: |
+          python scripts/generate_dashboard.py report.json dashboard.html \
+            "${{ github.server_url }}/${{ github.repository }}" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
       - name: Prepare Pages artifact
         if: always()
         run: |
           mkdir -p _site
-          cp report.html _site/index.html
+          cp dashboard.html _site/index.html
+          cp report.html _site/report.html
 
       - uses: actions/upload-pages-artifact@v3
         if: always()
