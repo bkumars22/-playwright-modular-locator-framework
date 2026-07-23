@@ -32,6 +32,25 @@ doesn't fail the test — and you get visibility into *which* strategy
 ended up finding the element (useful for noticing when your "primary"
 locator has quietly gone stale).
 
+### Auto-healing (detect + log)
+
+Whenever an element is found via anything *other than* the first strategy
+in the list, `ModularLocatorEngine` treats that as a "healed" lookup:
+
+- `find_element(...)` returns `report["healed"]` (`True`/`False`)
+- A `WARNING`-level log line is emitted naming the target, which
+  strategies failed first, and which strategy ultimately found it
+
+```
+WARNING locators.modular_locator_framework: Locator healed for target
+'login-button': ['playwright_exact_id'] failed, recovered via 'playwright_role'
+```
+
+This is detection/visibility only — it does not persist healed locators
+or rewrite your strategy lists automatically. It's the first, honest step
+toward self-healing: knowing *when* your primary locator has gone stale,
+without pretending the framework silently fixes your code for you.
+
 ---
 
 ## Project structure
@@ -174,7 +193,7 @@ Then open `report.html` in any browser to see pass/fail status per test.
 |---|---|
 | `test_modular_locator_framework.py` | The engine correctly falls through a chain of strategies, and correctly reports `none_found` when nothing matches — pure logic, no browser. |
 | `test_playwright_locator_strategy.py` | The same fallback behavior works when strategies are backed by a real Chromium page instead of a Python list. |
-| `test_real_page_navigation.py` | The framework works end-to-end against a real, unmodified website: fills in a login form by `id`, and — because the real submit button has no `id` — falls back to a role-based (`PlaywrightRoleStrategy`) lookup to find and click it, then asserts on the resulting page state. A second test verifies a failed-login flash message via `PlaywrightVisibleTextStrategy`. |
+| `test_real_page_navigation.py` | The framework works end-to-end against a real, unmodified website: fills in a login form by `id`, and — because the real submit button has no `id` — falls back to a role-based (`PlaywrightRoleStrategy`) lookup to find and click it, then asserts on the resulting page state. A second test verifies a failed-login flash message via `PlaywrightVisibleTextStrategy`. Both fallbacks trigger the auto-healing warning log described above. |
 
 As an end user, the meaningful signal is the **pass/fail result and which
 `strategy_used` was reported** — not what flashes on screen in headed mode
