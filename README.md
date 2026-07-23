@@ -276,3 +276,78 @@ engine = ModularLocatorEngine(strategies=[
 ```
 
 No other code needs to change.
+
+---
+
+## Tech stack
+
+- Python
+- Playwright (sync API)
+- pytest
+- GitHub Actions (CI)
+
+---
+
+## Usage
+
+```python
+from playwright.sync_api import sync_playwright
+from locators.modular_locator_framework import ModularLocatorEngine
+from locators.playwright_strategies import PlaywrightExactIdStrategy, PlaywrightVisibleTextStrategy
+
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.goto("https://example.com")
+
+    engine = ModularLocatorEngine(strategies=[
+        PlaywrightExactIdStrategy(page),
+        PlaywrightVisibleTextStrategy(page, expected_text="Submit"),
+    ])
+
+    result = engine.find_element(dom=None, target="submit-btn")
+    if result["element"]:
+        result["element"].click()
+
+    browser.close()
+```
+
+---
+
+## Test coverage snapshot
+
+9 automated tests, run via pytest and GitHub Actions CI. This table is a
+point-in-time snapshot — for current results, use the **live dashboard**
+linked at the top of this README rather than this table.
+
+| Module | Test | Status | Duration |
+|---|---|---|---|
+| modular locator framework | test_exact_id_match | ✓ Passed | 1 ms |
+| modular locator framework | test_falls_through_to_next_strategy_when_id_is_stale | ✓ Passed | 1 ms |
+| modular locator framework | test_no_strategy_matches | ✓ Passed | 1 ms |
+| modular locator framework | test_warning_logged_when_locator_heals | ✓ Passed | 1 ms |
+| modular locator framework | test_no_warning_logged_when_primary_strategy_matches | ✓ Passed | 1 ms |
+| playwright locator strategy | test_engine_finds_element_via_playwright_exact_id [chromium] | ✓ Passed | 760 ms |
+| playwright locator strategy | test_engine_falls_back_to_visible_text_when_id_is_stale [chromium] | ✓ Passed | 3.09 s |
+| real page navigation | test_locator_engine_logs_in_on_a_real_page [chromium] | ✓ Passed | 4.15 s |
+| real page navigation | test_locator_engine_reports_failed_login_via_visible_text [chromium] | ✓ Passed | 4.04 s |
+
+**Total: 9 passed, 0 failed, 0 skipped — 12.09s**
+
+This covers unit-level tests of the fallback logic itself, plus end-to-end
+Playwright tests against a real browser, including a full login-flow
+scenario proving the healing behavior works on an actual page, not just
+simulated data.
+
+---
+
+## Status
+
+This is a personal learning project exploring resilient test automation
+design patterns. It is not a production system and is not affiliated with
+any employer or commercial product — built independently to understand and
+demonstrate the Strategy pattern applied to test automation.
+
+## Author
+
+Kumaraswamy B
