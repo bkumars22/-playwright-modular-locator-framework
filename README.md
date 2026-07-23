@@ -1,5 +1,10 @@
 # Playwright Modular Locator Framework
 
+[![Tests and Dashboard](https://github.com/bkumars22/-playwright-modular-locator-framework/actions/workflows/tests-dashboard.yml/badge.svg)](https://github.com/bkumars22/-playwright-modular-locator-framework/actions/workflows/tests-dashboard.yml)
+
+**Live dashboard:** https://bkumars22.github.io/-playwright-modular-locator-framework/
+(auto-updated on every push to `main` — see [CI/CD dashboard](#cicd-dashboard-github-actions--pages) below)
+
 A pluggable, testable locator framework for UI test automation, built around
 the **Strategy design pattern**. Instead of hard-coding "how to find an
 element," each way of finding one (exact ID, visible text, class+tag,
@@ -131,6 +136,30 @@ The same pattern, backed by a real `Page` object:
 
 Swapping from Selenium to Playwright (or anything else) only means writing
 new strategy classes — `ModularLocatorEngine` itself never changes.
+
+---
+
+## CI/CD dashboard (GitHub Actions + Pages)
+
+`.github/workflows/tests-dashboard.yml` runs on every push to `main`:
+
+1. Sets up Python, installs dependencies from `requirements.txt`
+2. Installs the Chromium browser binary
+3. Runs the full test suite, generating `report.html`
+4. Publishes that report to **GitHub Pages** as `index.html` — regardless
+   of whether tests passed or failed, so the dashboard always reflects the
+   latest run
+5. The workflow itself still reports red/green correctly in the Actions
+   tab (a failing test fails the workflow run, even though the dashboard
+   still gets published)
+
+**One-time setup required in the GitHub UI** (can't be done via git push):
+Repo → **Settings → Pages → Build and deployment → Source** → select
+**"GitHub Actions"**. After that, every push to `main` auto-updates the
+dashboard at the live URL linked at the top of this README.
+
+You can also trigger a run manually from the **Actions** tab via
+"Run workflow" (the `workflow_dispatch` trigger).
 
 ---
 
