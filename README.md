@@ -65,12 +65,14 @@ python-playwright/
 ├── locators/
 │   ├── __init__.py
 │   ├── modular_locator_framework.py   # Core engine + Strategy pattern + in-memory demo
-│   └── playwright_strategies.py       # Playwright-backed strategy implementations
+│   ├── playwright_strategies.py       # Playwright-backed strategy implementations
+│   └── visual_match_strategy.py       # OpenCV template-matching fallback strategy
 ├── tests/
 │   ├── __init__.py
 │   ├── test_modular_locator_framework.py    # Pure-Python unit tests (no browser)
 │   ├── test_playwright_locator_strategy.py  # Playwright + synthetic inline HTML
-│   └── test_real_page_navigation.py         # Playwright + a real, live webpage
+│   ├── test_real_page_navigation.py         # Playwright + a real, live webpage
+│   └── test_visual_match.py                 # OpenCV template matching against synthetic images
 ├── venv/                # Local virtual environment (not committed)
 ├── pytest.ini            # testpaths config
 ├── requirements.txt      # Frozen dependency versions
@@ -136,6 +138,25 @@ The same pattern, backed by a real `Page` object:
 
 Swapping from Selenium to Playwright (or anything else) only means writing
 new strategy classes — `ModularLocatorEngine` itself never changes.
+
+### 5. Visual matching strategy (`locators/visual_match_strategy.py`)
+
+Every strategy above matches against a DOM — an ID, some text, a class, an
+ARIA label. `VisualMatchStrategy` is the fallback for when none of that
+exists (an icon-only button with no reliable attributes, say): it matches
+by *appearance* instead, using OpenCV template matching to search a
+full-page screenshot for the region that looks most like a small reference
+image of just the element.
+
+- `VisualMatchStrategy` — `cv2.matchTemplate` against a full-page
+  screenshot; returns the best match's position + confidence, or `None`
+  below `confidence_threshold`
+- Same `LocatorStrategy` contract as every other module, with one twist:
+  `find()`'s `dom` argument is repurposed as a screenshot *path* rather
+  than a DOM list, since this strategy has nothing to search but pixels —
+  see the class's own docstring, and `test_visual_match.py`'s
+  `test_plugs_into_modular_locator_engine_as_a_fallback_strategy` for how
+  that looks plugged into the real engine
 
 ---
 
