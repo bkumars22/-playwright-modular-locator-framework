@@ -40,9 +40,7 @@ jobs:
       - name: Generate dashboard
         if: always()
         run: |
-          python scripts/generate_dashboard.py report.json dashboard.html \
-            "${{ github.server_url }}/${{ github.repository }}" \
-            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          python scripts/generate_dashboard.py report.json dashboard.html
 
       - name: Prepare Pages artifact
         if: always()
