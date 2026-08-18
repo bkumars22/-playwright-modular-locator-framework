@@ -1,10 +1,18 @@
 """Renders report.json (from pytest-json-report) into a styled, self-contained
 HTML dashboard. Kept dependency-free (no Jinja2) so it runs the same locally
 and in CI with nothing beyond the stdlib.
+
+Healing detection is data-driven, not hardcoded: pytest-json-report captures
+each test's `logging` records verbatim (see test["call"]["log"]), and every
+healed lookup logs a structured WARNING via
+`locators.modular_locator_framework`'s `find_element()` — so a test only gets
+tagged "healed" here because its own captured log actually says so. Add a
+new test that heals and it shows up automatically; no name list to maintain.
 """
 
 import html
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +23,40 @@ STATUS_META = {
     "error": {"label": "Error", "color": "critical", "icon": "✕"},
     "skipped": {"label": "Skipped", "color": "warning", "icon": "●"},
 }
+
+# One entry per known test file, in the order the "realism ladder" should
+# present them. A test file not listed here still renders fine — it just
+# falls back to a humanized name with no description, appended at the end.
+STAGE_META = {
+    "modular_locator_framework": {
+        "label": "Unit",
+        "desc": "Strategies search a plain in-memory list &mdash; no browser at all. "
+        "Proves the fallback chain and <span class=\"mono\">none_found</span> "
+        "reporting are correct in isolation.",
+    },
+    "playwright_locator_strategy": {
+        "label": "Synthetic Browser",
+        "desc": "The same strategies, backed by a real Chromium page rendering an "
+        "inline HTML snippet instead of a Python list.",
+    },
+    "real_page_navigation": {
+        "label": "Real Page",
+        "desc": "A public, unmodified login form. The submit button has no "
+        "<span class=\"mono\">id</span>, so the engine has to actually fall "
+        "through to a role-based strategy to succeed.",
+    },
+    "visual_match": {
+        "label": "Visual Match",
+        "desc": "OpenCV template matching against a screenshot &mdash; the "
+        "last-resort strategy for elements with no reliable DOM attributes at all.",
+    },
+}
+STAGE_ORDER = list(STAGE_META)
+
+_HEALED_LOG_RE = re.compile(
+    r"Locator healed for target '(?P<target>[^']+)': "
+    r"\[(?P<failed>[^\]]*)\] failed, recovered via '(?P<recovered>[^']+)'"
+)
 
 
 def format_duration(seconds):
@@ -30,19 +72,38 @@ def test_duration(test):
     return sum(test.get(phase, {}).get("duration", 0) for phase in ("setup", "call", "teardown"))
 
 
-def split_nodeid(nodeid):
-    file_part, _, test_part = nodeid.partition("::")
-    module = Path(file_part).stem.replace("test_", "").replace("_", " ")
-    return module, test_part
+def module_stem(nodeid):
+    file_part, _, _ = nodeid.partition("::")
+    stem = Path(file_part).stem
+    if stem.startswith("test_"):
+        stem = stem[len("test_") :]
+    return stem
 
 
-def stat_tile(label, value, status=None):
-    color_css = f"var(--status-{status})" if status else "var(--text-primary)"
-    return f"""
-    <div class="tile">
-      <div class="tile-value" style="color:{color_css}">{value}</div>
-      <div class="tile-label">{html.escape(label)}</div>
-    </div>"""
+def stage_label(stem):
+    meta = STAGE_META.get(stem)
+    return meta["label"] if meta else stem.replace("_", " ").title()
+
+
+def test_display_name(nodeid):
+    _, _, test_part = nodeid.partition("::")
+    return test_part
+
+
+def find_healing(test):
+    """Return (failed_strategies, recovered_strategy) if this test's captured
+    logs contain a healing WARNING, else None. Reads the real log text — never
+    guesses from the test's name.
+    """
+    for phase in ("setup", "call", "teardown"):
+        for record in test.get(phase, {}).get("log", []):
+            if record.get("levelname") != "WARNING":
+                continue
+            m = _HEALED_LOG_RE.search(record.get("msg", ""))
+            if m:
+                failed = re.findall(r"'([^']+)'", m.group("failed"))
+                return failed, m.group("recovered")
+    return None
 
 
 def status_pill(outcome):
@@ -53,35 +114,108 @@ def status_pill(outcome):
     )
 
 
-def build_table_rows(tests):
+def strategy_tag(test):
+    healing = find_healing(test)
+    if healing:
+        failed, recovered = healing
+        last_failed = html.escape(failed[-1]) if failed else "?"
+        return f'<span class="strategy-tag healed">{last_failed} &rarr; {html.escape(recovered)}</span>'
+    if test["outcome"] == "passed":
+        return '<span class="strategy-tag primary">primary match</span>'
+    return '<span class="strategy-tag primary">&mdash;</span>'
+
+
+def build_stages(tests):
+    by_stem = {}
+    for test in tests:
+        by_stem.setdefault(module_stem(test["nodeid"]), []).append(test)
+
+    ordered = [s for s in STAGE_ORDER if s in by_stem]
+    ordered += [s for s in by_stem if s not in STAGE_ORDER]
+
+    stages = []
+    for stem in ordered:
+        stage_tests = by_stem[stem]
+        meta = STAGE_META.get(stem, {})
+        total = len(stage_tests)
+        passed = sum(1 for t in stage_tests if t["outcome"] == "passed")
+        pass_pct = round(passed / total * 100) if total else 0
+        stages.append(
+            {
+                "num": f"{len(stages) + 1:02d}",
+                "label": stage_label(stem),
+                "desc": meta.get("desc", ""),
+                "total": total,
+                "pass_pct": pass_pct,
+            }
+        )
+    return stages
+
+
+def build_stage_cards(stages):
+    cards = []
+    for s in stages:
+        cards.append(
+            f"""
+    <div class="stage">
+      <span class="stage-num">{s["num"]}</span>
+      <h3 class="stage-title">{html.escape(s["label"])}</h3>
+      <p class="stage-desc">{s["desc"]}</p>
+      <div class="stage-foot"><span class="stage-count mono">{s["total"]} tests</span>
+      <span class="stage-pass">{s["pass_pct"]}%</span></div>
+    </div>"""
+        )
+    return "\n".join(cards)
+
+
+def build_healed_rows(tests):
     rows = []
     for test in tests:
-        module, name = split_nodeid(test["nodeid"])
-        duration = format_duration(test_duration(test))
-        rows.append(f"""
-        <tr>
-          <td class="col-module">{html.escape(module)}</td>
-          <td class="col-test">{html.escape(name)}</td>
-          <td class="col-status">{status_pill(test["outcome"])}</td>
-          <td class="col-duration">{duration}</td>
-        </tr>""")
+        healing = find_healing(test)
+        if not healing:
+            continue
+        failed, recovered = healing
+        last_failed = html.escape(failed[-1]) if failed else "?"
+        rows.append(
+            f"""
+      <div class="heal-row">
+        <span class="mono">{html.escape(test_display_name(test["nodeid"]))}</span>
+        <span class="via-tag">{last_failed} &rarr; {html.escape(recovered)}</span>
+      </div>"""
+        )
     return "\n".join(rows)
 
 
-def build_meter(passed, failed, skipped, total):
-    if total == 0:
-        return '<div class="meter"><div class="meter-empty"></div></div>'
+def build_table_rows(tests):
+    rows = []
+    for test in tests:
+        module = stage_label(module_stem(test["nodeid"]))
+        name = test_display_name(test["nodeid"])
+        duration = format_duration(test_duration(test))
+        rows.append(
+            f"""
+        <tr>
+          <td class="col-module">{html.escape(module)}</td>
+          <td class="col-test mono">{html.escape(name)}</td>
+          <td class="col-status">{status_pill(test["outcome"])}</td>
+          <td class="col-strategy">{strategy_tag(test)}</td>
+          <td class="col-duration mono">{duration}</td>
+        </tr>"""
+        )
+    return "\n".join(rows)
 
-    segments = []
-    for count, color in ((passed, "good"), (failed, "critical"), (skipped, "warning")):
-        if count:
-            pct = (count / total) * 100
-            segments.append(f'<div class="meter-seg" style="width:{pct:.3f}%;background:var(--status-{color})"></div>')
-    return f'<div class="meter">{"".join(segments)}</div>'
+
+def stat_tile(value, label, css_class=""):
+    return f"""
+    <div class="tile">
+      <div class="tile-value mono {css_class}">{value}</div>
+      <div class="tile-label">{html.escape(label)}</div>
+    </div>"""
 
 
-def render(report, repo_url, run_url):
+def render(report):
     summary = report["summary"]
+    tests = report["tests"]
     total = summary.get("total", 0)
     passed = summary.get("passed", 0)
     failed = summary.get("failed", 0) + summary.get("error", 0)
@@ -90,233 +224,347 @@ def render(report, repo_url, run_url):
     duration = format_duration(report.get("duration", 0))
     generated = datetime.now(timezone.utc).strftime("%b %d, %Y %H:%M UTC")
 
-    overall_status = "good" if failed == 0 and total > 0 else "critical" if failed else "warning"
-    headline = f"{pass_rate:.0f}%"
+    overall_status = "warning" if total == 0 else "critical" if failed > 0 else "good"
 
-    tiles = "".join([
-        stat_tile("Total tests", total),
-        stat_tile("Passed", passed, "good" if passed else None),
-        stat_tile("Failed", failed, "critical" if failed else None),
-        stat_tile("Skipped", skipped, "warning" if skipped else None),
-        stat_tile("Duration", duration),
-    ])
+    stages = build_stages(tests)
+    healed = [t for t in tests if find_healing(t)]
+    strategies_exercised = len({module_stem(t["nodeid"]) for t in tests})
 
-    rows = build_table_rows(report["tests"])
-    meter = build_meter(passed, failed, skipped, total)
+    circumference = 339.3
+    ring_offset = circumference * (1 - pass_rate / 100)
 
-    repo_link = f'<a href="{repo_url}" class="footer-link">Repository</a>' if repo_url else ""
-    run_link = f'<a href="{run_url}" class="footer-link">Workflow run</a>' if run_url else ""
+    tiles = "".join(
+        [
+            stat_tile(total, "Total tests"),
+            stat_tile(strategies_exercised, "Test levels exercised"),
+            stat_tile(len(healed), "Self-healed fallbacks", "heal" if healed else ""),
+            stat_tile(duration, "Total duration"),
+        ]
+    )
+
+    stage_cards = build_stage_cards(stages)
+    healed_rows = build_healed_rows(tests)
+    table_rows = build_table_rows(tests)
+
+    spotlight = ""
+    if healed:
+        spotlight = f"""
+  <div class="section-head">
+    <p class="section-title">Self-healing spotlight</p>
+    <p class="section-note">The differentiator, not just the pass/fail count</p>
+  </div>
+  <div class="spotlight">
+    <div class="spotlight-top">
+      <span class="spotlight-tag">{len(healed)} of {total} tests healed</span>
+    </div>
+    <p class="spotlight-title">Detection, not silent magic</p>
+    <p class="spotlight-body">When an element is found by anything other than the first
+      strategy in the list, the engine logs a <span class="mono">WARNING</span> naming the
+      target and which strategy ultimately recovered it. It doesn't rewrite your locators
+      for you &mdash; it tells you the moment one has gone stale, which is the first honest
+      step toward self-healing.</p>
+    <div class="heal-list">{healed_rows}
+    </div>
+  </div>"""
 
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Locator Framework — Test Dashboard</title>
+<title>Locator Framework &mdash; Test Dashboard</title>
 <style>
   :root {{
     color-scheme: light;
-    --surface-1:      #fcfcfb;
-    --page-plane:     #f9f9f7;
-    --text-primary:   #0b0b0b;
-    --text-secondary: #52514e;
-    --text-muted:     #898781;
-    --gridline:       #e1e0d9;
-    --border:         rgba(11,11,11,0.10);
-    --status-good:      #0ca30c;
-    --status-warning:   #b8790f;
-    --status-critical:  #d03b3b;
-    --status-good-bg:     rgba(12,163,12,0.10);
-    --status-warning-bg:  rgba(184,121,15,0.12);
-    --status-critical-bg: rgba(208,59,59,0.10);
+    --page:        #faf8f3;
+    --surface:     #ffffff;
+    --surface-2:   #f3f0ea;
+    --text-1:      #1c1a16;
+    --text-2:      #5b564c;
+    --text-3:      #8c867a;
+    --border:      rgba(28,26,22,0.12);
+    --border-2:    rgba(28,26,22,0.20);
+    --accent:      #a97a1e;
+    --accent-bg:   rgba(169,122,30,0.10);
+    --heal:        #00968c;
+    --heal-bg:     rgba(0,150,140,0.09);
+    --good:        #128a5f;
+    --good-bg:     rgba(18,138,95,0.10);
+    --warning:     #b8901a;
+    --warning-bg:  rgba(184,144,26,0.12);
+    --critical:    #d1272f;
+    --critical-bg: rgba(209,39,47,0.10);
+    --shadow: 0 1px 2px rgba(28,26,22,0.04), 0 8px 24px -12px rgba(28,26,22,0.10);
   }}
   @media (prefers-color-scheme: dark) {{
-    :root:where(:not([data-theme="light"])) {{
+    :root:not([data-theme="light"]) {{
       color-scheme: dark;
-      --surface-1:      #1a1a19;
-      --page-plane:     #0d0d0d;
-      --text-primary:   #ffffff;
-      --text-secondary: #c3c2b7;
-      --text-muted:     #898781;
-      --gridline:       #2c2c2a;
-      --border:         rgba(255,255,255,0.10);
-      --status-good:      #0ca30c;
-      --status-warning:   #fab219;
-      --status-critical:  #e66767;
-      --status-good-bg:     rgba(12,163,12,0.16);
-      --status-warning-bg:  rgba(250,178,25,0.14);
-      --status-critical-bg: rgba(230,103,103,0.14);
+      --page:        #100e0b;
+      --surface:     #1c1914;
+      --surface-2:   #241f18;
+      --text-1:      #f7f4ee;
+      --text-2:      #c2bcae;
+      --text-3:      #8c8577;
+      --border:      rgba(247,244,238,0.12);
+      --border-2:    rgba(247,244,238,0.20);
+      --accent:      #b8842a;
+      --accent-bg:   rgba(184,132,42,0.16);
+      --heal:        #1f9e93;
+      --heal-bg:     rgba(31,158,147,0.16);
+      --good:        #1a9e78;
+      --good-bg:     rgba(26,158,120,0.16);
+      --warning:     #a8890f;
+      --warning-bg:  rgba(168,137,15,0.18);
+      --critical:    #c73f3a;
+      --critical-bg: rgba(199,63,58,0.16);
+      --shadow: 0 1px 2px rgba(0,0,0,0.20), 0 8px 24px -12px rgba(0,0,0,0.50);
     }}
   }}
   :root[data-theme="dark"] {{
     color-scheme: dark;
-    --surface-1:      #1a1a19;
-    --page-plane:     #0d0d0d;
-    --text-primary:   #ffffff;
-    --text-secondary: #c3c2b7;
-    --text-muted:     #898781;
-    --gridline:       #2c2c2a;
-    --border:         rgba(255,255,255,0.10);
-    --status-good:      #0ca30c;
-    --status-warning:   #fab219;
-    --status-critical:  #e66767;
-    --status-good-bg:     rgba(12,163,12,0.16);
-    --status-warning-bg:  rgba(250,178,25,0.14);
-    --status-critical-bg: rgba(230,103,103,0.14);
+    --page:        #100e0b;
+    --surface:     #1c1914;
+    --surface-2:   #241f18;
+    --text-1:      #f7f4ee;
+    --text-2:      #c2bcae;
+    --text-3:      #8c8577;
+    --border:      rgba(247,244,238,0.12);
+    --border-2:    rgba(247,244,238,0.20);
+    --accent:      #b8842a;
+    --accent-bg:   rgba(184,132,42,0.16);
+    --heal:        #1f9e93;
+    --heal-bg:     rgba(31,158,147,0.16);
+    --good:        #1a9e78;
+    --good-bg:     rgba(26,158,120,0.16);
+    --warning:     #a8890f;
+    --warning-bg:  rgba(168,137,15,0.18);
+    --critical:    #c73f3a;
+    --critical-bg: rgba(199,63,58,0.16);
+    --shadow: 0 1px 2px rgba(0,0,0,0.20), 0 8px 24px -12px rgba(0,0,0,0.50);
   }}
 
   * {{ box-sizing: border-box; }}
   body {{
     margin: 0;
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--page-plane);
-    color: var(--text-primary);
+    background: var(--page);
+    color: var(--text-1);
+    font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", -apple-system,
+                 system-ui, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
   }}
-  .wrap {{ max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }}
-
-  header {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 28px; }}
-  h1 {{ font-size: 20px; font-weight: 600; margin: 0 0 4px; }}
-  .subtitle {{ color: var(--text-secondary); font-size: 13px; margin: 0; }}
-
-  .theme-toggle {{
-    border: 1px solid var(--border);
-    background: var(--surface-1);
-    color: var(--text-secondary);
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 13px;
-    cursor: pointer;
+  .mono {{
+    font-family: "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono", "JetBrains Mono",
+                 ui-monospace, "Courier New", monospace;
+    font-variant-numeric: tabular-nums;
   }}
-  .theme-toggle:hover {{ color: var(--text-primary); }}
+  a {{ color: inherit; }}
+  .wrap {{ max-width: 980px; margin: 0 auto; padding: 40px 20px 64px; }}
 
-  .hero-card {{
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 28px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 28px;
-    flex-wrap: wrap;
-  }}
-  .hero-figure {{
-    font-size: 56px;
-    font-weight: 600;
-    line-height: 1;
-  }}
-  .hero-meta {{ flex: 1; min-width: 200px; }}
-  .hero-label {{ color: var(--text-secondary); font-size: 14px; margin-bottom: 10px; }}
+  .masthead {{ display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 20px; flex-wrap: wrap; margin-bottom: 32px; }}
+  .eyebrow {{ display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }}
+  .eyebrow .dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--{overall_status});
+    box-shadow: 0 0 0 3px var(--{overall_status}-bg); }}
+  h1 {{ font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance; }}
+  .masthead-sub {{ color: var(--text-2); font-size: 14px; margin: 0; max-width: 60ch; }}
+  .masthead-sub .mono {{ color: var(--text-3); }}
+  .masthead-actions {{ display: flex; gap: 8px; align-items: flex-start; }}
+  .btn {{ display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-2);
+    background: var(--surface); color: var(--text-2); border-radius: 8px; padding: 7px 12px;
+    font-size: 12.5px; font-weight: 600; text-decoration: none; cursor: pointer; font-family: inherit; }}
+  .btn:hover {{ color: var(--text-1); border-color: var(--text-3); }}
+  .btn:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 
-  .meter {{ display: flex; gap: 2px; height: 10px; border-radius: 6px; overflow: hidden; background: var(--gridline); }}
-  .meter-seg {{ height: 100%; }}
-  .meter-empty {{ width: 100%; height: 100%; }}
+  .hero {{ background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: var(--shadow); padding: 28px 32px; display: flex; align-items: center;
+    gap: 32px; flex-wrap: wrap; margin-bottom: 16px; }}
+  .ring-figure {{ position: relative; width: 128px; height: 128px; flex-shrink: 0; }}
+  .ring-figure svg {{ transform: rotate(-90deg); }}
+  .ring-track {{ fill: none; stroke: var(--surface-2); stroke-width: 10; }}
+  .ring-value {{ fill: none; stroke: var(--{overall_status}); stroke-width: 10; stroke-linecap: round;
+    transition: stroke-dashoffset 900ms cubic-bezier(.2,.8,.2,1); }}
+  @media (prefers-reduced-motion: reduce) {{ .ring-value {{ transition: none; }} }}
+  .ring-label {{ position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; }}
+  .ring-pct {{ font-size: 26px; font-weight: 700; line-height: 1; }}
+  .ring-pct-sub {{ font-size: 10px; color: var(--text-3); margin-top: 3px; letter-spacing: 0.03em; }}
+  .hero-meta {{ flex: 1; min-width: 220px; }}
+  .hero-headline {{ font-size: 15px; font-weight: 700; margin: 0 0 4px; }}
+  .hero-detail {{ font-size: 13px; color: var(--text-2); margin: 0; }}
+  .hero-detail .mono {{ color: var(--text-1); font-weight: 600; }}
 
-  .tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 28px; }}
-  .tile {{
-    background: var(--surface-1);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 16px;
-  }}
-  .tile-value {{ font-size: 28px; font-weight: 600; line-height: 1.1; margin-bottom: 4px; }}
-  .tile-label {{ color: var(--text-secondary); font-size: 12px; }}
+  .tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 12px; margin-bottom: 28px; }}
+  .tile {{ background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }}
+  .tile-value {{ font-size: 24px; font-weight: 700; line-height: 1.1; margin-bottom: 4px; }}
+  .tile-value.heal {{ color: var(--heal); }}
+  .tile-label {{ font-size: 11.5px; color: var(--text-3); letter-spacing: 0.02em; }}
 
-  table {{ width: 100%; border-collapse: collapse; background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }}
-  thead th {{
-    text-align: left;
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-muted);
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--gridline);
-  }}
-  tbody td {{ padding: 12px 16px; border-bottom: 1px solid var(--gridline); font-size: 14px; }}
+  .section-head {{ display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin: 40px 0 14px; }}
+  .section-title {{ font-size: 13px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.08em; color: var(--text-3); margin: 0; }}
+  .section-note {{ font-size: 12.5px; color: var(--text-3); margin: 0; }}
+
+  .ladder {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }}
+  .stage {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }}
+  .stage-num {{ font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px;
+    font-weight: 700; color: var(--accent); background: var(--accent-bg); display: inline-block;
+    padding: 2px 7px; border-radius: 5px; margin-bottom: 10px; letter-spacing: 0.02em; }}
+  .stage-title {{ font-size: 14px; font-weight: 700; margin: 0 0 5px; }}
+  .stage-desc {{ font-size: 12px; color: var(--text-2); margin: 0 0 14px; line-height: 1.45; min-height: 48px; }}
+  .stage-foot {{ display: flex; align-items: center; justify-content: space-between; font-size: 12px; }}
+  .stage-count {{ color: var(--text-1); font-weight: 700; }}
+  .stage-pass {{ color: var(--good); font-weight: 700; }}
+
+  .spotlight {{ background: linear-gradient(180deg, var(--heal-bg), transparent 65%), var(--surface);
+    border: 1px solid var(--border); border-left: 3px solid var(--heal); border-radius: 14px; padding: 22px 26px; }}
+  .spotlight-top {{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }}
+  .spotlight-tag {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--heal); background: var(--heal-bg); padding: 3px 9px; border-radius: 999px; }}
+  .spotlight-title {{ font-size: 15px; font-weight: 700; margin: 0; }}
+  .spotlight-body {{ font-size: 13.5px; color: var(--text-2); line-height: 1.6; max-width: 68ch; margin: 0 0 16px; }}
+  .heal-list {{ display: flex; flex-direction: column; gap: 8px; }}
+  .heal-row {{ display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 8px 10px;
+    border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }}
+  .heal-row .mono {{ color: var(--text-1); font-weight: 600; flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+  .heal-row .via-tag {{ font-size: 10.5px; font-weight: 700; color: var(--heal); background: var(--heal-bg);
+    padding: 2px 7px; border-radius: 5px; white-space: nowrap; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }}
+
+  .table-scroll {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }}
+  table {{ width: 100%; border-collapse: collapse; min-width: 640px; }}
+  thead th {{ text-align: left; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-3); padding: 12px 16px; border-bottom: 1px solid var(--border); }}
+  tbody td {{ padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }}
   tbody tr:last-child td {{ border-bottom: none; }}
-  .col-module {{ color: var(--text-secondary); width: 22%; }}
+  tbody tr:hover {{ background: var(--surface-2); }}
+  .col-module {{ color: var(--text-3); font-size: 12px; width: 15%; white-space: nowrap; }}
   .col-test {{ font-weight: 500; }}
-  .col-status {{ width: 120px; }}
-  .col-duration {{ width: 100px; text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary); }}
+  .col-status {{ width: 100px; }}
+  .col-strategy {{ width: 210px; }}
+  .col-duration {{ width: 90px; text-align: right; }}
 
-  .pill {{
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-size: 12px;
-    font-weight: 600;
-  }}
-  .pill-good {{ background: var(--status-good-bg); color: var(--status-good); }}
-  .pill-warning {{ background: var(--status-warning-bg); color: var(--status-warning); }}
-  .pill-critical {{ background: var(--status-critical-bg); color: var(--status-critical); }}
-  .pill-icon {{ font-size: 11px; }}
+  .pill {{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 700; }}
+  .pill-good {{ background: var(--good-bg); color: var(--good); }}
+  .pill-warning {{ background: var(--warning-bg); color: var(--warning); }}
+  .pill-critical {{ background: var(--critical-bg); color: var(--critical); }}
+  .pill-icon {{ font-size: 10px; }}
 
-  footer {{ margin-top: 28px; display: flex; gap: 16px; align-items: center; color: var(--text-muted); font-size: 12px; flex-wrap: wrap; }}
-  .footer-link {{ color: var(--text-secondary); text-decoration: none; border-bottom: 1px solid var(--border); }}
-  .footer-link:hover {{ color: var(--text-primary); }}
+  .strategy-tag {{ display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600;
+    padding: 2px 8px; border-radius: 5px; white-space: nowrap;
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }}
+  .strategy-tag.healed {{ color: var(--heal); background: var(--heal-bg); }}
+  .strategy-tag.primary {{ color: var(--text-3); background: var(--surface-2); }}
 
-  @media (max-width: 480px) {{
-    .hero-figure {{ font-size: 40px; }}
-    .col-module {{ display: none; }}
-  }}
+  footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }}
+  .chips {{ display: flex; gap: 6px; flex-wrap: wrap; }}
+  .chip {{ font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2);
+    border: 1px solid var(--border); padding: 4px 9px; border-radius: 999px; }}
+  .footer-links {{ display: flex; gap: 16px; font-size: 12.5px; }}
+  .footer-links a {{ color: var(--text-2); text-decoration: none; border-bottom: 1px solid var(--border-2); }}
+  .footer-links a:hover {{ color: var(--text-1); }}
+
+  @media (max-width: 480px) {{ .col-module {{ display: none; }} }}
 </style>
 </head>
 <body>
   <div class="wrap">
-    <header>
+    <header class="masthead">
       <div>
+        <div class="eyebrow"><span class="dot"></span> CI Test Telemetry</div>
         <h1>Playwright Modular Locator Framework</h1>
-        <p class="subtitle">Test dashboard &middot; generated {generated}</p>
+        <p class="masthead-sub">Self-healing element lookup for UI test automation &mdash; a
+          prioritized chain of locator strategies, with visibility into which one actually
+          found each element. Generated <span class="mono">{generated}</span></p>
       </div>
-      <button class="theme-toggle" onclick="toggleTheme()">Toggle theme</button>
+      <div class="masthead-actions">
+        <button class="btn" id="theme-toggle" type="button">Toggle theme</button>
+      </div>
     </header>
 
-    <div class="hero-card">
-      <div class="hero-figure" style="color:var(--status-{overall_status})">{headline}</div>
+    <div class="hero">
+      <div class="ring-figure">
+        <svg width="128" height="128" viewBox="0 0 128 128">
+          <circle class="ring-track" cx="64" cy="64" r="54"></circle>
+          <circle class="ring-value" id="ring" cx="64" cy="64" r="54"
+            stroke-dasharray="{circumference}" stroke-dashoffset="{circumference}"
+            data-target-offset="{ring_offset:.2f}"></circle>
+        </svg>
+        <div class="ring-label">
+          <div class="ring-pct mono">{pass_rate:.0f}%</div>
+          <div class="ring-pct-sub">PASS RATE</div>
+        </div>
+      </div>
       <div class="hero-meta">
-        <div class="hero-label">Pass rate &middot; {passed}/{total} tests passing</div>
-        {meter}
+        <p class="hero-headline">{passed} of {total} tests passing &middot; {failed} failed &middot; {skipped} skipped</p>
+        <p class="hero-detail">Full suite ran in <span class="mono">{duration}</span> across
+          {len(stages)} level{'' if len(stages) == 1 else 's'} of realism &mdash; from
+          pure-Python logic to a real, live page.</p>
       </div>
     </div>
 
-    <div class="tiles">
-      {tiles}
+    <div class="tiles">{tiles}
     </div>
 
-    <table>
-      <thead>
-        <tr>
-          <th class="col-module">Module</th>
-          <th class="col-test">Test</th>
-          <th class="col-status">Status</th>
-          <th class="col-duration">Duration</th>
-        </tr>
-      </thead>
-      <tbody>
-        {rows}
-      </tbody>
-    </table>
+    <div class="section-head">
+      <p class="section-title">Realism ladder</p>
+      <p class="section-note">Same Strategy pattern, staged levels of proof</p>
+    </div>
+    <div class="ladder">{stage_cards}
+    </div>
+    {spotlight}
+
+    <div class="section-head">
+      <p class="section-title">Full results</p>
+      <p class="section-note">{total} tests &middot; {duration}</p>
+    </div>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="col-module">Module</th>
+            <th class="col-test">Test</th>
+            <th class="col-status">Result</th>
+            <th class="col-strategy">Resolved via</th>
+            <th class="col-duration">Duration</th>
+          </tr>
+        </thead>
+        <tbody>{table_rows}
+        </tbody>
+      </table>
+    </div>
 
     <footer>
-      <span>pytest &middot; {total} tests &middot; {duration}</span>
-      {repo_link}
-      {run_link}
-      <a href="report.html" class="footer-link">Detailed report</a>
+      <div class="chips">
+        <span class="chip">Python</span>
+        <span class="chip">Playwright</span>
+        <span class="chip">pytest</span>
+        <span class="chip">OpenCV</span>
+        <span class="chip">GitHub Actions</span>
+      </div>
+      <div class="footer-links">
+        <a href="report.html">Detailed report</a>
+      </div>
     </footer>
   </div>
 
   <script>
     function toggleTheme() {{
       const root = document.documentElement;
-      const current = root.getAttribute('data-theme');
-      const next = current === 'dark' ? 'light' : 'dark';
+      const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
       root.setAttribute('data-theme', next);
       localStorage.setItem('theme', next);
     }}
+    document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
     const saved = localStorage.getItem('theme');
     if (saved) document.documentElement.setAttribute('data-theme', saved);
+
+    const ring = document.getElementById('ring');
+    requestAnimationFrame(() => {{ ring.style.strokeDashoffset = ring.dataset.targetOffset; }});
   </script>
 </body>
 </html>
@@ -326,11 +574,9 @@ def render(report, repo_url, run_url):
 def main():
     report_path = sys.argv[1] if len(sys.argv) > 1 else "report.json"
     output_path = sys.argv[2] if len(sys.argv) > 2 else "dashboard.html"
-    repo_url = sys.argv[3] if len(sys.argv) > 3 else ""
-    run_url = sys.argv[4] if len(sys.argv) > 4 else ""
 
     report = json.loads(Path(report_path).read_text())
-    html_out = render(report, repo_url, run_url)
+    html_out = render(report)
     Path(output_path).write_text(html_out, encoding="utf-8")
     print(f"Wrote {output_path}")
 
