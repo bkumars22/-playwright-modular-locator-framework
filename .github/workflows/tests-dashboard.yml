@@ -34,7 +34,7 @@ jobs:
 
       - name: Run tests
         id: run_tests
-        run: pytest --html=report.html --self-contained-html --json-report --json-report-file=report.json
+        run: pytest --html=report.html --self-contained-html --css=scripts/report_theme.css --json-report --json-report-file=report.json
         continue-on-error: true
 
       - name: Generate dashboard

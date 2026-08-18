@@ -168,11 +168,16 @@ image of just the element.
 2. Installs the Chromium browser binary
 3. Runs the full test suite, producing both a machine-readable
    `report.json` (via `pytest-json-report`) and a detailed
-   `report.html` (via `pytest-html`)
+   `report.html` (via `pytest-html`, themed with `scripts/report_theme.css`
+   through pytest-html's own `--css` override so it matches the dashboard
+   instead of pytest-html's stock styling)
 4. `scripts/generate_dashboard.py` turns `report.json` into a styled,
-   self-contained `dashboard.html` — a hero pass-rate figure, a
-   pass/fail/skip meter, stat tiles, and a per-test results table,
-   with light/dark mode
+   self-contained `dashboard.html` — a hero pass-rate figure, a realism
+   ladder grouping tests by how close to a real browser/page they run,
+   a self-healing spotlight (which tests actually demonstrated a locator
+   strategy falling back, computed from each test's own captured log —
+   not a hardcoded list), and a per-test results table, with light/dark
+   mode
 5. Publishes `dashboard.html` to **GitHub Pages** as `index.html` (with
    the full `report.html` alongside it, linked from the dashboard's
    footer as "Detailed report") — regardless of whether tests passed or
@@ -191,7 +196,7 @@ You can also trigger a run manually from the **Actions** tab via
 dashboard locally:
 
 ```bash
-pytest --json-report --json-report-file=report.json
+pytest --json-report --json-report-file=report.json --html=report.html --self-contained-html --css=scripts/report_theme.css
 python scripts/generate_dashboard.py report.json dashboard.html
 ```
 
@@ -245,7 +250,7 @@ Generate a browsable HTML report (self-contained — open the file directly,
 no server needed):
 
 ```bash
-pytest --html=report.html --self-contained-html
+pytest --html=report.html --self-contained-html --css=scripts/report_theme.css
 ```
 
 Then open `report.html` in any browser to see pass/fail status per test.

@@ -1,0 +1,199 @@
+/* Theme override for pytest-html's default report.html, applied via pytest's
+   --css flag (appended after pytest-html's own stylesheet, so these rules win
+   on selector ties). Matches the dashboard's palette/type system so the
+   "Detailed report" link doesn't drop back to stock pytest-html styling.
+
+   Automatic light/dark via prefers-color-scheme — pytest-html's own markup
+   has no theme-toggle hook to wire a manual switch into via CSS alone. */
+
+:root {
+  --page:        #faf8f3;
+  --surface:     #ffffff;
+  --surface-2:   #f3f0ea;
+  --text-1:      #1c1a16;
+  --text-2:      #5b564c;
+  --text-3:      #8c867a;
+  --border:      rgba(28, 26, 22, 0.14);
+  --accent:      #a97a1e;
+  --good:        #128a5f;
+  --warning:     #b8901a;
+  --critical:    #d1272f;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page:        #100e0b;
+    --surface:     #1c1914;
+    --surface-2:   #241f18;
+    --text-1:      #f7f4ee;
+    --text-2:      #c2bcae;
+    --text-3:      #8c8577;
+    --border:      rgba(247, 244, 238, 0.16);
+    --accent:      #b8842a;
+    --good:        #1a9e78;
+    --warning:     #a8890f;
+    --critical:    #c73f3a;
+  }
+}
+
+body {
+  background: var(--page);
+  color: var(--text-2);
+  font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", -apple-system,
+    system-ui, "Helvetica Neue", sans-serif;
+  min-width: 0;
+  padding: 32px clamp(16px, 4vw, 40px) 64px;
+}
+
+h1#title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  color: var(--text-1);
+  font-weight: 700;
+}
+
+p,
+a {
+  color: var(--text-2);
+}
+
+a:hover {
+  color: var(--text-1);
+}
+
+/* ---- environment table ---- */
+#environment {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+#environment td {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-2);
+}
+#environment tr:last-child td {
+  border-bottom: none;
+}
+#environment tr:nth-child(odd) {
+  background-color: var(--surface-2);
+}
+
+/* ---- summary card ----
+   Selector is `body > .summary`, not `.summary`, because pytest-html's
+   plugin-hook slots for extra content are also literally classed
+   "additional-summary summary" (a sibling inside the real summary div) —
+   a bare `.summary` rule styles that empty hook slot too, rendering as a
+   second, contentless bordered box beneath the real card. */
+body > .summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin: 20px 0;
+}
+.summary__reload__button {
+  background-color: var(--accent);
+  color: var(--page);
+}
+.summary__reload__button:hover {
+  filter: brightness(1.1);
+}
+.filters button,
+.collapse button {
+  color: var(--text-3);
+}
+.filters button:hover,
+.collapse button:hover {
+  color: var(--text-1);
+}
+
+/* ---- results table ---- */
+#results-table {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  color: var(--text-2);
+  font-family: "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono",
+    "JetBrains Mono", ui-monospace, "Courier New", monospace;
+  font-size: 12.5px;
+}
+#results-table th,
+#results-table td {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+#results-table thead th {
+  background: var(--surface-2);
+  color: var(--text-3);
+  font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+#results-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+
+span.passed,
+.passed .col-result {
+  color: var(--good);
+  font-weight: 700;
+}
+span.skipped,
+span.xfailed,
+span.rerun,
+.skipped .col-result,
+.xfailed .col-result,
+.rerun .col-result {
+  color: var(--warning);
+  font-weight: 700;
+}
+span.error,
+span.failed,
+span.xpassed,
+.error .col-result,
+.failed .col-result,
+.xpassed .col-result {
+  color: var(--critical);
+  font-weight: 700;
+}
+
+.sortable.desc:after {
+  border-color: var(--accent) transparent transparent transparent;
+}
+.sortable.asc:after {
+  border-color: transparent transparent var(--accent) transparent;
+}
+
+.logwrapper {
+  background-color: var(--surface-2);
+  border-radius: 6px;
+}
+.logwrapper .log {
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+.logwrapper .logexpander {
+  background-color: var(--surface);
+  border-color: var(--border);
+  color: var(--text-2);
+}
+.logwrapper .logexpander:hover {
+  color: var(--text-1);
+  border-color: var(--text-3);
+}
+
+div.media,
+.media-container {
+  border-color: var(--border);
+}
