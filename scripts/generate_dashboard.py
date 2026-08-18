@@ -12,6 +12,7 @@ new test that heals and it shows up automatically; no name list to maintain.
 
 import html
 import json
+import math
 import re
 import sys
 from datetime import datetime, timezone
@@ -154,10 +155,11 @@ def build_stages(tests):
 
 def build_stage_cards(stages):
     cards = []
-    for s in stages:
+    for i, s in enumerate(stages):
+        delay = 100 + i * 50
         cards.append(
             f"""
-    <div class="stage">
+    <div class="stage rise" style="animation-delay: {delay}ms">
       <span class="stage-num">{s["num"]}</span>
       <h3 class="stage-title">{html.escape(s["label"])}</h3>
       <p class="stage-desc">{s["desc"]}</p>
@@ -205,12 +207,27 @@ def build_table_rows(tests):
     return "\n".join(rows)
 
 
-def stat_tile(value, label, css_class=""):
+def stat_tile(value, label, css_class="", accent_var="--border"):
     return f"""
-    <div class="tile">
+    <div class="tile rise" style="--tile-accent: var({accent_var})">
       <div class="tile-value mono {css_class}">{value}</div>
       <div class="tile-label">{html.escape(label)}</div>
     </div>"""
+
+
+def build_ticks(cx=88, cy=88, r_outer=86, r_inner_minor=80, r_inner_major=76, count=24):
+    """Rangefinder-style tick marks around the hero scope ring, generated
+    server-side so the page needs no JS beyond the theme toggle + ring fill."""
+    ticks = []
+    for i in range(count):
+        angle = (i / count) * 2 * math.pi
+        is_major = i % 6 == 0
+        r_inner = r_inner_major if is_major else r_inner_minor
+        x1, y1 = cx + r_outer * math.cos(angle), cy + r_outer * math.sin(angle)
+        x2, y2 = cx + r_inner * math.cos(angle), cy + r_inner * math.sin(angle)
+        cls = "tick major" if is_major else "tick"
+        ticks.append(f'<line x1="{x1:.2f}" y1="{y1:.2f}" x2="{x2:.2f}" y2="{y2:.2f}" class="{cls}"></line>')
+    return "\n".join(ticks)
 
 
 def render(report):
@@ -230,14 +247,16 @@ def render(report):
     healed = [t for t in tests if find_healing(t)]
     strategies_exercised = len({module_stem(t["nodeid"]) for t in tests})
 
-    circumference = 339.3
+    ring_radius = 72
+    circumference = 2 * math.pi * ring_radius
     ring_offset = circumference * (1 - pass_rate / 100)
+    ticks = build_ticks()
 
     tiles = "".join(
         [
             stat_tile(total, "Total tests"),
-            stat_tile(strategies_exercised, "Test levels exercised"),
-            stat_tile(len(healed), "Self-healed fallbacks", "heal" if healed else ""),
+            stat_tile(strategies_exercised, "Locator strategies exercised"),
+            stat_tile(len(healed), "Self-healed fallbacks", "heal" if healed else "", "--heal"),
             stat_tile(duration, "Total duration"),
         ]
     )
@@ -253,7 +272,7 @@ def render(report):
     <p class="section-title">Self-healing spotlight</p>
     <p class="section-note">The differentiator, not just the pass/fail count</p>
   </div>
-  <div class="spotlight">
+  <div class="spotlight rise" style="animation-delay: 100ms">
     <div class="spotlight-top">
       <span class="spotlight-tag">{len(healed)} of {total} tests healed</span>
     </div>
@@ -283,9 +302,11 @@ def render(report):
     --text-2:      #5b564c;
     --text-3:      #8c867a;
     --border:      rgba(28,26,22,0.12);
-    --border-2:    rgba(28,26,22,0.20);
+    --border-2:    rgba(28,26,22,0.22);
+    --grid-dot:    rgba(28,26,22,0.10);
     --accent:      #a97a1e;
     --accent-bg:   rgba(169,122,30,0.10);
+    --accent-glow: rgba(169,122,30,0.28);
     --heal:        #00968c;
     --heal-bg:     rgba(0,150,140,0.09);
     --good:        #128a5f;
@@ -294,21 +315,23 @@ def render(report):
     --warning-bg:  rgba(184,144,26,0.12);
     --critical:    #d1272f;
     --critical-bg: rgba(209,39,47,0.10);
-    --shadow: 0 1px 2px rgba(28,26,22,0.04), 0 8px 24px -12px rgba(28,26,22,0.10);
+    --shadow: 0 1px 2px rgba(28,26,22,0.05), 0 16px 40px -16px rgba(28,26,22,0.16);
   }}
   @media (prefers-color-scheme: dark) {{
     :root:not([data-theme="light"]) {{
       color-scheme: dark;
-      --page:        #100e0b;
+      --page:        #0d0b09;
       --surface:     #1c1914;
       --surface-2:   #241f18;
       --text-1:      #f7f4ee;
       --text-2:      #c2bcae;
       --text-3:      #8c8577;
       --border:      rgba(247,244,238,0.12);
-      --border-2:    rgba(247,244,238,0.20);
-      --accent:      #b8842a;
-      --accent-bg:   rgba(184,132,42,0.16);
+      --border-2:    rgba(247,244,238,0.22);
+      --grid-dot:    rgba(247,244,238,0.07);
+      --accent:      #d9a53d;
+      --accent-bg:   rgba(184,132,42,0.18);
+      --accent-glow: rgba(217,165,61,0.30);
       --heal:        #1f9e93;
       --heal-bg:     rgba(31,158,147,0.16);
       --good:        #1a9e78;
@@ -317,21 +340,23 @@ def render(report):
       --warning-bg:  rgba(168,137,15,0.18);
       --critical:    #c73f3a;
       --critical-bg: rgba(199,63,58,0.16);
-      --shadow: 0 1px 2px rgba(0,0,0,0.20), 0 8px 24px -12px rgba(0,0,0,0.50);
+      --shadow: 0 1px 2px rgba(0,0,0,0.30), 0 16px 40px -16px rgba(0,0,0,0.60);
     }}
   }}
   :root[data-theme="dark"] {{
     color-scheme: dark;
-    --page:        #100e0b;
+    --page:        #0d0b09;
     --surface:     #1c1914;
     --surface-2:   #241f18;
     --text-1:      #f7f4ee;
     --text-2:      #c2bcae;
     --text-3:      #8c8577;
     --border:      rgba(247,244,238,0.12);
-    --border-2:    rgba(247,244,238,0.20);
-    --accent:      #b8842a;
-    --accent-bg:   rgba(184,132,42,0.16);
+    --border-2:    rgba(247,244,238,0.22);
+    --grid-dot:    rgba(247,244,238,0.07);
+    --accent:      #d9a53d;
+    --accent-bg:   rgba(184,132,42,0.18);
+    --accent-glow: rgba(217,165,61,0.30);
     --heal:        #1f9e93;
     --heal-bg:     rgba(31,158,147,0.16);
     --good:        #1a9e78;
@@ -340,13 +365,15 @@ def render(report):
     --warning-bg:  rgba(168,137,15,0.18);
     --critical:    #c73f3a;
     --critical-bg: rgba(199,63,58,0.16);
-    --shadow: 0 1px 2px rgba(0,0,0,0.20), 0 8px 24px -12px rgba(0,0,0,0.50);
+    --shadow: 0 1px 2px rgba(0,0,0,0.30), 0 16px 40px -16px rgba(0,0,0,0.60);
   }}
 
   * {{ box-sizing: border-box; }}
   body {{
     margin: 0;
-    background: var(--page);
+    background-color: var(--page);
+    background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+    background-size: 26px 26px;
     color: var(--text-1);
     font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", -apple-system,
                  system-ui, "Helvetica Neue", sans-serif;
@@ -358,16 +385,31 @@ def render(report):
     font-variant-numeric: tabular-nums;
   }}
   a {{ color: inherit; }}
-  .wrap {{ max-width: 980px; margin: 0 auto; padding: 40px 20px 64px; }}
+  .wrap {{ max-width: 1020px; margin: 0 auto; padding: 48px 24px 88px; }}
+
+  @keyframes riseIn {{
+    from {{ opacity: 0; transform: translateY(10px); }}
+    to   {{ opacity: 1; transform: translateY(0); }}
+  }}
+  @keyframes sweep {{
+    from {{ transform: rotate(0deg); }}
+    to   {{ transform: rotate(360deg); }}
+  }}
+  .rise {{ animation: riseIn 620ms cubic-bezier(.2,.7,.2,1) both; }}
+  @media (prefers-reduced-motion: reduce) {{
+    .rise {{ animation: none; }}
+    .sweep-arc, .ring-value {{ animation: none !important; transition: none !important; }}
+  }}
+
+  .mark line, .mark circle {{ stroke: var(--{overall_status}); }}
 
   .masthead {{ display: flex; justify-content: space-between; align-items: flex-start;
-    gap: 20px; flex-wrap: wrap; margin-bottom: 32px; }}
+    gap: 20px; flex-wrap: wrap; margin-bottom: 40px; }}
   .eyebrow {{ display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700;
-    letter-spacing: 0.10em; text-transform: uppercase; color: var(--text-3); margin-bottom: 10px; }}
-  .eyebrow .dot {{ width: 7px; height: 7px; border-radius: 50%; background: var(--{overall_status});
-    box-shadow: 0 0 0 3px var(--{overall_status}-bg); }}
-  h1 {{ font-size: 26px; font-weight: 700; letter-spacing: -0.01em; margin: 0 0 6px; text-wrap: balance; }}
-  .masthead-sub {{ color: var(--text-2); font-size: 14px; margin: 0; max-width: 60ch; }}
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); margin-bottom: 14px; }}
+  h1 {{ font-size: 34px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.08;
+    margin: 0 0 10px; text-wrap: balance; }}
+  .masthead-sub {{ color: var(--text-2); font-size: 14.5px; line-height: 1.6; margin: 0; max-width: 56ch; }}
   .masthead-sub .mono {{ color: var(--text-3); }}
   .masthead-actions {{ display: flex; gap: 8px; align-items: flex-start; }}
   .btn {{ display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--border-2);
@@ -376,77 +418,95 @@ def render(report):
   .btn:hover {{ color: var(--text-1); border-color: var(--text-3); }}
   .btn:focus-visible {{ outline: 2px solid var(--accent); outline-offset: 2px; }}
 
-  .hero {{ background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
-    box-shadow: var(--shadow); padding: 28px 32px; display: flex; align-items: center;
-    gap: 32px; flex-wrap: wrap; margin-bottom: 16px; }}
-  .ring-figure {{ position: relative; width: 128px; height: 128px; flex-shrink: 0; }}
-  .ring-figure svg {{ transform: rotate(-90deg); }}
-  .ring-track {{ fill: none; stroke: var(--surface-2); stroke-width: 10; }}
-  .ring-value {{ fill: none; stroke: var(--{overall_status}); stroke-width: 10; stroke-linecap: round;
-    transition: stroke-dashoffset 900ms cubic-bezier(.2,.8,.2,1); }}
-  @media (prefers-reduced-motion: reduce) {{ .ring-value {{ transition: none; }} }}
-  .ring-label {{ position: absolute; inset: 0; display: flex; flex-direction: column;
+  .hero {{ background: var(--surface); border: 1px solid var(--border); border-radius: 20px;
+    box-shadow: var(--shadow); padding: 36px 40px; display: flex; align-items: center;
+    gap: 40px; flex-wrap: wrap; margin-bottom: 18px; position: relative; overflow: hidden; }}
+  .scope {{ position: relative; width: 176px; height: 176px; flex-shrink: 0; }}
+  .sweep-arc {{ position: absolute; inset: 0;
+    background: conic-gradient(from 0deg, transparent 0deg, var(--accent-glow) 18deg, transparent 60deg);
+    border-radius: 50%; animation: sweep 7s linear infinite; opacity: 0.7; }}
+  .scope svg {{ position: relative; transform: rotate(-90deg); }}
+  .tick {{ stroke: var(--border-2); stroke-width: 1.5; }}
+  .tick.major {{ stroke: var(--text-3); stroke-width: 2; }}
+  .ring-track {{ fill: none; stroke: var(--surface-2); stroke-width: 9; }}
+  .ring-value {{ fill: none; stroke: var(--{overall_status}); stroke-width: 9; stroke-linecap: round;
+    transition: stroke-dashoffset 1100ms cubic-bezier(.16,.8,.2,1); }}
+  .scope-label {{ position: absolute; inset: 0; display: flex; flex-direction: column;
     align-items: center; justify-content: center; }}
-  .ring-pct {{ font-size: 26px; font-weight: 700; line-height: 1; }}
-  .ring-pct-sub {{ font-size: 10px; color: var(--text-3); margin-top: 3px; letter-spacing: 0.03em; }}
-  .hero-meta {{ flex: 1; min-width: 220px; }}
-  .hero-headline {{ font-size: 15px; font-weight: 700; margin: 0 0 4px; }}
-  .hero-detail {{ font-size: 13px; color: var(--text-2); margin: 0; }}
+  .scope-pct {{ font-size: 36px; font-weight: 700; line-height: 1; letter-spacing: -0.01em; }}
+  .scope-pct-sub {{ font-size: 9.5px; color: var(--text-3); margin-top: 5px; letter-spacing: 0.12em; font-weight: 700; }}
+  .hero-meta {{ flex: 1; min-width: 240px; }}
+  .hero-headline {{ font-size: 16px; font-weight: 700; margin: 0 0 6px; }}
+  .hero-detail {{ font-size: 13.5px; color: var(--text-2); line-height: 1.6; margin: 0; max-width: 46ch; }}
   .hero-detail .mono {{ color: var(--text-1); font-weight: 600; }}
 
-  .tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-    gap: 12px; margin-bottom: 28px; }}
-  .tile {{ background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }}
-  .tile-value {{ font-size: 24px; font-weight: 700; line-height: 1.1; margin-bottom: 4px; }}
+  .tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px; margin-bottom: 32px; }}
+  .tile {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; position: relative; overflow: hidden; }}
+  .tile::before {{ content: ""; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+    background: var(--tile-accent, var(--border)); }}
+  .tile-value {{ font-size: 27px; font-weight: 700; line-height: 1.1; margin-bottom: 5px; }}
   .tile-value.heal {{ color: var(--heal); }}
   .tile-label {{ font-size: 11.5px; color: var(--text-3); letter-spacing: 0.02em; }}
 
   .section-head {{ display: flex; align-items: baseline; justify-content: space-between;
-    gap: 12px; margin: 40px 0 14px; }}
-  .section-title {{ font-size: 13px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--text-3); margin: 0; }}
+    gap: 12px; margin: 48px 0 16px; }}
+  .section-title {{ display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-3); margin: 0; }}
+  .section-title::before {{ content: ""; width: 14px; height: 1.5px; background: var(--accent); }}
   .section-note {{ font-size: 12.5px; color: var(--text-3); margin: 0; }}
 
-  .ladder {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }}
-  .stage {{ background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }}
-  .stage-num {{ font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 11px;
-    font-weight: 700; color: var(--accent); background: var(--accent-bg); display: inline-block;
-    padding: 2px 7px; border-radius: 5px; margin-bottom: 10px; letter-spacing: 0.02em; }}
-  .stage-title {{ font-size: 14px; font-weight: 700; margin: 0 0 5px; }}
-  .stage-desc {{ font-size: 12px; color: var(--text-2); margin: 0 0 14px; line-height: 1.45; min-height: 48px; }}
-  .stage-foot {{ display: flex; align-items: center; justify-content: space-between; font-size: 12px; }}
+  .ladder {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }}
+  .stage {{ background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 20px; position: relative; transition: border-color 200ms, transform 200ms; }}
+  .stage:hover {{ border-color: var(--border-2); transform: translateY(-2px); }}
+  .stage-num {{ font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; font-size: 26px;
+    font-weight: 700; color: var(--accent-bg); -webkit-text-stroke: 1px var(--accent);
+    display: block; margin-bottom: 6px; letter-spacing: -0.02em; }}
+  .stage-title {{ font-size: 14.5px; font-weight: 700; margin: 0 0 6px; }}
+  .stage-desc {{ font-size: 12px; color: var(--text-2); margin: 0 0 16px; line-height: 1.5; min-height: 54px; }}
+  .stage-foot {{ display: flex; align-items: center; justify-content: space-between; font-size: 12px;
+    padding-top: 12px; border-top: 1px solid var(--border); }}
   .stage-count {{ color: var(--text-1); font-weight: 700; }}
   .stage-pass {{ color: var(--good); font-weight: 700; }}
 
-  .spotlight {{ background: linear-gradient(180deg, var(--heal-bg), transparent 65%), var(--surface);
-    border: 1px solid var(--border); border-left: 3px solid var(--heal); border-radius: 14px; padding: 22px 26px; }}
-  .spotlight-top {{ display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }}
-  .spotlight-tag {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--heal); background: var(--heal-bg); padding: 3px 9px; border-radius: 999px; }}
-  .spotlight-title {{ font-size: 15px; font-weight: 700; margin: 0; }}
-  .spotlight-body {{ font-size: 13.5px; color: var(--text-2); line-height: 1.6; max-width: 68ch; margin: 0 0 16px; }}
-  .heal-list {{ display: flex; flex-direction: column; gap: 8px; }}
-  .heal-row {{ display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 8px 10px;
-    border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }}
+  .spotlight {{ background: var(--surface); border: 1px solid var(--border); border-radius: 18px;
+    padding: 28px 32px; position: relative; overflow: hidden; }}
+  .spotlight::before {{ content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--heal); }}
+  .spotlight::after {{ content: ""; position: absolute; right: -60px; top: -60px; width: 220px; height: 220px;
+    background: radial-gradient(circle, var(--heal-bg), transparent 70%); pointer-events: none; }}
+  .spotlight-top {{ display: flex; align-items: center; gap: 10px; margin-bottom: 12px; position: relative; }}
+  .spotlight-tag {{ font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--heal); background: var(--heal-bg); padding: 4px 10px; border-radius: 999px; }}
+  .spotlight-title {{ font-size: 17px; font-weight: 700; margin: 0 0 10px; position: relative; }}
+  .spotlight-body {{ font-size: 13.5px; color: var(--text-2); line-height: 1.65; max-width: 66ch; margin: 0 0 18px; position: relative; }}
+  .heal-list {{ display: flex; flex-direction: column; gap: 8px; position: relative; }}
+  .heal-row {{ display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 10px 14px;
+    border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); transition: border-color 150ms; }}
+  .heal-row:hover {{ border-color: var(--heal); }}
   .heal-row .mono {{ color: var(--text-1); font-weight: 600; flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
-  .heal-row .via-tag {{ font-size: 10.5px; font-weight: 700; color: var(--heal); background: var(--heal-bg);
-    padding: 2px 7px; border-radius: 5px; white-space: nowrap; font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }}
+  .heal-row .via-tag {{ font-size: 10.5px; font-weight: 700; color: var(--heal); background: var(--surface);
+    padding: 3px 8px; border-radius: 6px; white-space: nowrap; border: 1px solid var(--heal-bg);
+    font-family: "Cascadia Mono", Consolas, ui-monospace, monospace; }}
 
-  .table-scroll {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }}
-  table {{ width: 100%; border-collapse: collapse; min-width: 640px; }}
+  .table-scroll {{ overflow-x: auto; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }}
+  table {{ width: 100%; border-collapse: collapse; min-width: 660px; }}
   thead th {{ text-align: left; font-size: 10.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.06em; color: var(--text-3); padding: 12px 16px; border-bottom: 1px solid var(--border); }}
-  tbody td {{ padding: 11px 16px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }}
+    letter-spacing: 0.07em; color: var(--text-3); padding: 14px 18px; border-bottom: 1px solid var(--border);
+    background: var(--surface-2); }}
+  tbody td {{ padding: 12px 18px; border-bottom: 1px solid var(--border); font-size: 13.5px; vertical-align: middle; }}
   tbody tr:last-child td {{ border-bottom: none; }}
-  tbody tr:hover {{ background: var(--surface-2); }}
+  tbody tr {{ transition: background 120ms; }}
+  tbody tr:hover td {{ background: var(--surface-2); }}
   .col-module {{ color: var(--text-3); font-size: 12px; width: 15%; white-space: nowrap; }}
   .col-test {{ font-weight: 500; }}
   .col-status {{ width: 100px; }}
-  .col-strategy {{ width: 210px; }}
+  .col-strategy {{ width: 220px; }}
   .col-duration {{ width: 90px; text-align: right; }}
 
-  .pill {{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+  .pill {{ display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px;
     font-size: 11.5px; font-weight: 700; }}
   .pill-good {{ background: var(--good-bg); color: var(--good); }}
   .pill-warning {{ background: var(--warning-bg); color: var(--warning); }}
@@ -459,11 +519,11 @@ def render(report):
   .strategy-tag.healed {{ color: var(--heal); background: var(--heal-bg); }}
   .strategy-tag.primary {{ color: var(--text-3); background: var(--surface-2); }}
 
-  footer {{ margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border);
+  footer {{ margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--border);
     display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }}
   .chips {{ display: flex; gap: 6px; flex-wrap: wrap; }}
   .chip {{ font-size: 11px; font-weight: 600; color: var(--text-2); background: var(--surface-2);
-    border: 1px solid var(--border); padding: 4px 9px; border-radius: 999px; }}
+    border: 1px solid var(--border); padding: 4px 10px; border-radius: 999px; }}
   .footer-links {{ display: flex; gap: 16px; font-size: 12.5px; }}
   .footer-links a {{ color: var(--text-2); text-decoration: none; border-bottom: 1px solid var(--border-2); }}
   .footer-links a:hover {{ color: var(--text-1); }}
@@ -473,34 +533,45 @@ def render(report):
 </head>
 <body>
   <div class="wrap">
-    <header class="masthead">
+    <header class="masthead rise">
       <div>
-        <div class="eyebrow"><span class="dot"></span> CI Test Telemetry</div>
+        <div class="eyebrow">
+          <svg class="mark" width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="5.5" stroke-width="1.3"></circle>
+            <line x1="7" y1="0.5" x2="7" y2="3.2" stroke-width="1.3"></line>
+            <line x1="7" y1="10.8" x2="7" y2="13.5" stroke-width="1.3"></line>
+            <line x1="0.5" y1="7" x2="3.2" y2="7" stroke-width="1.3"></line>
+            <line x1="10.8" y1="7" x2="13.5" y2="7" stroke-width="1.3"></line>
+          </svg>
+          CI Test Telemetry
+        </div>
         <h1>Playwright Modular Locator Framework</h1>
         <p class="masthead-sub">Self-healing element lookup for UI test automation &mdash; a
           prioritized chain of locator strategies, with visibility into which one actually
-          found each element. Generated <span class="mono">{generated}</span></p>
+          locked onto each element. Generated <span class="mono">{generated}</span></p>
       </div>
       <div class="masthead-actions">
         <button class="btn" id="theme-toggle" type="button">Toggle theme</button>
       </div>
     </header>
 
-    <div class="hero">
-      <div class="ring-figure">
-        <svg width="128" height="128" viewBox="0 0 128 128">
-          <circle class="ring-track" cx="64" cy="64" r="54"></circle>
-          <circle class="ring-value" id="ring" cx="64" cy="64" r="54"
-            stroke-dasharray="{circumference}" stroke-dashoffset="{circumference}"
+    <div class="hero rise" style="animation-delay: 60ms">
+      <div class="scope">
+        <div class="sweep-arc"></div>
+        <svg width="176" height="176" viewBox="0 0 176 176">
+          <g>{ticks}</g>
+          <circle class="ring-track" cx="88" cy="88" r="{ring_radius}"></circle>
+          <circle class="ring-value" id="ring" cx="88" cy="88" r="{ring_radius}"
+            stroke-dasharray="{circumference:.2f}" stroke-dashoffset="{circumference:.2f}"
             data-target-offset="{ring_offset:.2f}"></circle>
         </svg>
-        <div class="ring-label">
-          <div class="ring-pct mono">{pass_rate:.0f}%</div>
-          <div class="ring-pct-sub">PASS RATE</div>
+        <div class="scope-label">
+          <div class="scope-pct mono">{pass_rate:.0f}%</div>
+          <div class="scope-pct-sub">PASS RATE</div>
         </div>
       </div>
       <div class="hero-meta">
-        <p class="hero-headline">{passed} of {total} tests passing &middot; {failed} failed &middot; {skipped} skipped</p>
+        <p class="hero-headline">{passed} of {total} tests locked on &middot; {failed} failed &middot; {skipped} skipped</p>
         <p class="hero-detail">Full suite ran in <span class="mono">{duration}</span> across
           {len(stages)} level{'' if len(stages) == 1 else 's'} of realism &mdash; from
           pure-Python logic to a real, live page.</p>
@@ -522,7 +593,7 @@ def render(report):
       <p class="section-title">Full results</p>
       <p class="section-note">{total} tests &middot; {duration}</p>
     </div>
-    <div class="table-scroll">
+    <div class="table-scroll rise" style="animation-delay: 150ms">
       <table>
         <thead>
           <tr>

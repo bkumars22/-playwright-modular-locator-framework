@@ -14,42 +14,50 @@
   --text-2:      #5b564c;
   --text-3:      #8c867a;
   --border:      rgba(28, 26, 22, 0.14);
+  --border-2:    rgba(28, 26, 22, 0.24);
+  --grid-dot:    rgba(28, 26, 22, 0.10);
   --accent:      #a97a1e;
   --good:        #128a5f;
   --warning:     #b8901a;
   --critical:    #d1272f;
+  --shadow: 0 1px 2px rgba(28, 26, 22, 0.05), 0 16px 40px -16px rgba(28, 26, 22, 0.16);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --page:        #100e0b;
+    --page:        #0d0b09;
     --surface:     #1c1914;
     --surface-2:   #241f18;
     --text-1:      #f7f4ee;
     --text-2:      #c2bcae;
     --text-3:      #8c8577;
     --border:      rgba(247, 244, 238, 0.16);
-    --accent:      #b8842a;
-    --good:        #1a9e78;
-    --warning:     #a8890f;
-    --critical:    #c73f3a;
+    --border-2:    rgba(247, 244, 238, 0.26);
+    --grid-dot:    rgba(247, 244, 238, 0.07);
+    --accent:      #d9a53d;
+    --good:        #3ecb84;
+    --warning:     #e0b23a;
+    --critical:    #ef5350;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.30), 0 16px 40px -16px rgba(0, 0, 0, 0.60);
   }
 }
 
 body {
-  background: var(--page);
+  background-color: var(--page);
+  background-image: radial-gradient(var(--grid-dot) 1px, transparent 1px);
+  background-size: 26px 26px;
   color: var(--text-2);
   font-family: "Bahnschrift", "Segoe UI Variable Text", "Segoe UI", -apple-system,
     system-ui, "Helvetica Neue", sans-serif;
   min-width: 0;
-  padding: 32px clamp(16px, 4vw, 40px) 64px;
+  padding: 40px clamp(16px, 4vw, 48px) 72px;
 }
 
 h1#title {
-  font-size: 22px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--text-1);
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 h2 {
@@ -70,8 +78,9 @@ a:hover {
 #environment {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
+  box-shadow: var(--shadow);
 }
 #environment td {
   border: none;
@@ -94,9 +103,21 @@ a:hover {
 body > .summary {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 20px 24px;
-  margin: 20px 0;
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+  padding: 26px 30px;
+  margin: 24px 0;
+  position: relative;
+  overflow: hidden;
+}
+body > .summary::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--accent);
 }
 .summary__reload__button {
   background-color: var(--accent);
@@ -117,8 +138,9 @@ body > .summary {
 /* ---- results table ---- */
 #results-table {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
+  box-shadow: var(--shadow);
   color: var(--text-2);
   font-family: "Cascadia Mono", "Cascadia Code", Consolas, "SF Mono",
     "JetBrains Mono", ui-monospace, "Courier New", monospace;
@@ -129,6 +151,7 @@ body > .summary {
   border: none;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
+  padding: 10px 14px;
 }
 #results-table thead th {
   background: var(--surface-2);
@@ -137,7 +160,11 @@ body > .summary {
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
+  padding: 12px 14px;
+}
+#results-table tbody tr {
+  transition: background-color 120ms;
 }
 #results-table tbody tr:hover td {
   background: var(--surface-2);
@@ -176,7 +203,7 @@ span.xpassed,
 
 .logwrapper {
   background-color: var(--surface-2);
-  border-radius: 6px;
+  border-radius: 8px;
 }
 .logwrapper .log {
   border: 1px solid var(--border);
@@ -187,6 +214,7 @@ span.xpassed,
   background-color: var(--surface);
   border-color: var(--border);
   color: var(--text-2);
+  border-radius: 6px;
 }
 .logwrapper .logexpander:hover {
   color: var(--text-1);
@@ -196,4 +224,5 @@ span.xpassed,
 div.media,
 .media-container {
   border-color: var(--border);
+  border-radius: 8px;
 }
